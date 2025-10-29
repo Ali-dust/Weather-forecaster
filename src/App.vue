@@ -6,7 +6,6 @@ import WeatherForecast from './components/WeatherForecast.vue';
 import AppSpinner from './components/AppSpinner.vue';
 
 // --- State Management ---
-// We need to store location and weather data separately now
 const locationData = ref(null);
 const weatherData = ref(null);
 const loading = ref(false);
@@ -15,74 +14,56 @@ const error = ref(null);
 // --- API Logic ---
 
 /**
- * This is the main function that gets weather from Open-Meteo.
- * It's reusable for both IP lookup and search.
+ * 1. Fetches weather from Open-Meteo.
+ * (This function is correct)
  */
 const fetchWeather = async (lat, lon) => {
-  loading.value = true;
+  loading.value = true; // Set loading true *inside* this function
   error.value = null;
   weatherData.value = null;
 
   try {
-    // Open-Meteo URL. We ask for specific daily and current weather data.
-    // 'current' for current, 'daily' for the 7-day forecast.
     const apiUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto`;
-
     const response = await fetch(apiUrl);
     
     if (!response.ok) {
       throw new Error('Could not fetch weather data.');
     }
-
     weatherData.value = await response.json();
-    
   } catch (err) {
-    error.value = err.message;
-  } finally {
-    loading.value = false;
+    // Let the calling function know an error happened
+    throw new Error(`Weather API error: ${err.message}`);
   }
+  // Note: We don't set loading.value = false here
+  // We let the function *calling* this one decide when loading is fully done
 };
 
 /**
- * 1. This function runs on load to get location from IP.
+ * 2. NEW: Fetches a location name from lat/lon.
+ * (THIS WAS THE MISSING FUNCTION)
  */
-const fetchWeatherForIP = async () => {
-  loading.value = true;
-  error.value = null;
-  locationData.value = null;
-
+const fetchLocationName = async (lat, lon) => {
   try {
-    // 1a. Call the keyless IP API
-    // IMPORTANT: ip-api.com's free endpoint is HTTP. 
-    // If your GitHub page is HTTPS, this may be blocked.
-    // For a real project, you'd use their paid HTTPS endpoint.
-    // For this learning project, we use their free HTTPS proxy.
-    const locResponse = await fetch(`https://freeipapi.com/api/json/`);
-    
-    if (!locResponse.ok) {
-      throw new Error('Could not fetch IP location.');
+    const geoApiUrl = `https://geocoding-api.open-meteo.com/v1/reverse?latitude=${lat}&longitude=${lon}&format=json`;
+    const response = await fetch(geoApiUrl);
+    if (!response.ok) {
+      throw new Error('Could not fetch location name.');
     }
+    const data = await response.json();
     
-    const locData = await locResponse.json();
-    
-    // Store location for display
     locationData.value = {
-      city: locData.cityName,
-      country: locData.countryName,
+      city: data.city || data.name || 'Unknown Location',
+      country: data.country || '',
     };
-    
-    // 1b. Now, use the location to call the weather API
-    await fetchWeather(locData.latitude, locData.longitude);
-
   } catch (err) {
-    error.value = err.message;
-    loading.value = false;
+    throw new Error(`Geocoding API error: ${err.message}`);
   }
 };
 
+
 /**
- * 2. This function handles the search event.
- * It must first convert a city name to coordinates.
+ * 3. This function handles the search event.
+ * (This function is correct)
  */
 const handleSearch = async (city) => {
   loading.value = true;
@@ -91,7 +72,7 @@ const handleSearch = async (city) => {
   locationData.value = null;
   
   try {
-    // 2a. Use Open-Meteo's *geocoding* API to find the city
+    // 3a. Use Open-Meteo's *geocoding* API to find the city
     const geoApiUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${city}&count=1&language=en&format=json`;
     
     const geoResponse = await fetch(geoApiUrl);
@@ -113,27 +94,27 @@ const handleSearch = async (city) => {
       country: loc.country,
     };
 
-    // 2b. Now, use the coordinates to call the weather API
+    // 3b. Now, use the coordinates to call the weather API
     await fetchWeather(loc.latitude, loc.longitude);
 
+    // 3c. Save to local storage
     localStorage.setItem('lastCity', loc.name);
     
   } catch (err) {
     error.value = err.message;
+  } finally {
     loading.value = false;
   }
 };
 
 // --- Lifecycle Hook ---
+// (This is correct, and will now work)
 onMounted(() => {
-  // 4. Check for a saved city first
-  const savedCity = localStorage.getItem('lastCity'); // <-- NEW
+  const savedCity = localStorage.getItem('lastCity');
   
-  if (savedCity) { // <-- NEW
-    // If we have a saved city, just search for it
-    handleSearch(savedCity); // <-- NEW
+  if (savedCity) {
+    handleSearch(savedCity);
   } else {
-    // 5. If no saved city, use geolocation as the default
     if (!("geolocation" in navigator)) {
       error.value = "Geolocation is not supported. Please use the search bar.";
       return;
@@ -147,9 +128,10 @@ onMounted(() => {
         try {
           const { latitude, longitude } = position.coords;
           
+          // This Promise.all will now work
           await Promise.all([
             fetchWeather(latitude, longitude),
-            fetchLocationName(latitude, longitude)
+            fetchLocationName(latitude, longitude) // <-- This function now exists!
           ]);
           
         } catch (err) {
@@ -167,7 +149,7 @@ onMounted(() => {
           error.value = "Could not get your location. Please use the search bar.";
         }
         console.error("Geolocation error:", err);
-      }
+D      }
     );
   }
 });
